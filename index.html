@@ -5,10 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="author" content="Pramod Maduthisara">
 <meta name="theme-color" content="#0b3d24">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light">
+<meta name="darkreader-lock">
 <title>OMI Royal – The Sri Lankan card game</title>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Lilita+One&family=Noto+Sans+Sinhala:wght@500;700&family=Noto+Sans+Tamil:wght@500;700&display=swap" rel="stylesheet">
 <style>
-:root{--hw:clamp(50px,17vw,84px);--tw:clamp(46px,15vw,72px);--gold:#ffc83d;--felt:#14703b}
+:root{color-scheme:light only;--hw:clamp(50px,17vw,84px);--tw:clamp(46px,15vw,72px);--gold:#ffc83d;--felt:#14703b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{font-family:Fredoka,"Noto Sans Sinhala","Noto Sans Tamil","Trebuchet MS",sans-serif;font-weight:500;color:#fff;background:radial-gradient(#0f5c30,#06251a);overflow:hidden}
@@ -206,7 +209,8 @@ html[lang=si] .o,html[lang=ta] .o{font-size:28px}
 <div class="panel"><ul class="rules" id="rulesList"></ul></div></div>
 
 <div id="toast"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>if(typeof mqtt==='undefined'){document.write('<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"><\/script>')}</script>
 <script>
 (()=>{
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -284,7 +288,7 @@ const better=(a,b,Tr)=>a.s===b.s?a.r>b.r:a.s===Tr;
 const canPlay=(h,tr,c)=>{const ls=tr.length?tr[0].card.s:null;return!ls||c.s===ls||!h.some(x=>x.s===ls)};
 const sortH=h=>h.sort((a,b)=>SU.indexOf(a.s)-SU.indexOf(b.s)||b.r-a.r);
 function deck(){const d=[];for(const s of SU)for(let r=7;r<=14;r++)d.push({s,r});for(let i=31;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
-let H=null,names=[...BOTN],humans=[true,false,false,false],pids={},mode='off',peer=null,conn=null,hostConns={},started=false,roomCode='',gen=0;
+let H=null,names=[...BOTN],humans=[true,false,false,false],pids={},mode='off',mq=null,hbT=null,hostConns={},started=false,roomCode='',gen=0;
 let myName='';try{myName=localStorage.getItem('omiName')||''}catch(e){}
 let PID='';try{PID=localStorage.getItem('omiPid');if(!PID){PID=Math.random().toString(36).slice(2,12);localStorage.setItem('omiPid',PID)}}catch(e){PID=Math.random().toString(36).slice(2,12)}
 function newGame(){H={dealer:Math.floor(Math.random()*4),score:[0,0],carry:0,tok:0,names,humans,phase:'trump',trick:[],tricks:[0,0],hands:[[],[],[],[]],trump:null};newHand()}
@@ -312,9 +316,9 @@ function botPlay(seat){const h=H.hands[seat],tr=H.trick,Tr=H.trump,ls=tr.length?
  if((w.seat+2)%4===seat)return low(Lc);const win=Lc.filter(c=>better(c,w.card,Tr));return win.length?low(win):low(Lc)}
 function aiStep(){if(!H)return;if(H.phase!=='trump'&&H.phase!=='play')return;const tk=++H.tok,s=H.turn;if(humans[s])return;
  setTimeout(()=>{if(!H||tk!==H.tok)return;H.phase==='trump'?actTrump(s,botTrump(s)):actPlay(s,botPlay(s))},H.phase==='trump'?1300:700+Math.random()*500)}
-const view=seat=>({phase:H.phase,dealer:H.dealer,turn:H.turn,trump:H.trump,hand:H.hands[seat],counts:H.hands.map(h=>h.length),trick:H.trick,tw:H.tw,tricks:H.tricks,score:H.score,carry:H.carry,names,res:H.res,seat,host:mode!=='guest'});
-function push(){for(const s in hostConns)try{hostConns[s].send({t:'st',v:view(+s)})}catch(e){}render(view(0));saveHost()}
-function bcastRx(seat,e){for(const s in hostConns)try{hostConns[s].send({t:'rx',seat,e})}catch(x){}fly(seat,e)}
+const view=seat=>({ver:H.ver|0,phase:H.phase,dealer:H.dealer,turn:H.turn,trump:H.trump,hand:H.hands[seat],counts:H.hands.map(h=>h.length),trick:H.trick,tw:H.tw,tricks:H.tricks,score:H.score,carry:H.carry,names,res:H.res,seat,host:mode!=='guest'});
+function push(){H.ver=(H.ver|0)+1;for(const s in hostConns)tx(+s,{t:'st',v:view(+s)});render(view(0));saveHost()}
+function bcastRx(seat,e){for(const s in hostConns)tx(+s,{t:'rx',seat,e});fly(seat,e)}
 
 /* ===== saved sessions (survive page reload / app switching) ===== */
 function saveHost(){if(mode!=='host')return;try{localStorage.setItem('omiHost',JSON.stringify({code:roomCode,t:Date.now(),H,names,humans,pids,started}))}catch(e){}}
@@ -331,7 +335,7 @@ let V=null,prevKeys=new Set(),prevHand=0;
 const avOf=n=>['🦁','🐼','🦊','🐯','🐸','🐵','🦉','🐲','🐧','🦄'][[...String(n)].reduce((a,c)=>a+c.charCodeAt(0),0)%10];
 let ac;function snd(k){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();const n=ac.sampleRate*.07,b=ac.createBuffer(1,n,ac.sampleRate),d=b.getChannelData(0);for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);const s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();f.type='bandpass';f.frequency.value=k?2000:1100;g.gain.value=.6;s.buffer=b;s.connect(f);f.connect(g);g.connect(ac.destination);s.start()}catch(e){}}
 function render(v){V=v;const rel=s=>(s-v.seat+4)%4,us=v.seat%2,sg=v.trump?SG[v.trump]:'?';
- if(!$('#tbl').classList.contains('on'))show('tbl');
+ if(!$('#tbl').classList.contains('on')){show('tbl');keepAwake()}
  $('#sU').textContent=v.score[us];$('#sT').textContent=v.score[1-us];
  $('#trump').innerHTML=`${T('omi')} <i style="color:${v.trump==='H'||v.trump==='D'?'#d4202c':'#16161a'}">${sg}</i>`;
  $('#tcount').textContent=`${T('tricks')} ${v.tricks[us]}–${v.tricks[1-us]}`+(v.carry?` · ${T('bonus')} +${v.carry}`:'');
@@ -360,16 +364,16 @@ function render(v){V=v;const rel=s=>(s-v.seat+4)%4,us=v.seat%2,sg=v.trump?SG[v.t
 function fly(seat,e){if(!V)return;const el=$('#o'+((seat-V.seat+4)%4)),r=el.getBoundingClientRect(),s=document.createElement('span');s.className='flyx';s.textContent=e;s.style.left=r.left+r.width/2-20+'px';s.style.top=r.top+'px';document.body.appendChild(s);setTimeout(()=>s.remove(),2300)}
 
 /* ===== actions & nav ===== */
-function act(a,v){if(mode==='guest'){if(conn&&conn.open)conn.send({t:'act',a,v});else toast(T('reconn'));return}a==='trump'?actTrump(0,v):actPlay(0,v)}
+function act(a,v){if(mode==='guest'){if(mq&&mq.connected)pub(tUp(),{t:'act',pid:PID,a,v});else toast(T('reconn'));return}a==='trump'?actTrump(0,v):actPlay(0,v)}
 $('#suits').innerHTML=SU.map(s=>`<button class="sb ${s==='H'||s==='D'?'r':'k'}" data-s="${s}" aria-label="${s}">${SG[s]}</button>`).join('');
 $$('.sb').forEach(b=>b.onclick=()=>act('trump',b.dataset.s));
 $('#rx').innerHTML=['👍','😂','😮','😢','😡','🔥','👏','🤝','🙏','GG'].map(e=>`<button>${e}</button>`).join('');
-$$('#rx button').forEach(b=>b.onclick=()=>{const e=b.textContent;$('#rx').classList.remove('on');if(mode==='guest')conn&&conn.open&&conn.send({t:'rx',e});else bcastRx(0,e)});
+$$('#rx button').forEach(b=>b.onclick=()=>{const e=b.textContent;$('#rx').classList.remove('on');if(mode==='guest')pub(tUp(),{t:'rx',pid:PID,e});else bcastRx(0,e)});
 $('#bRx').onclick=()=>$('#rx').classList.toggle('on');
 const show=id=>$$('.scr').forEach(s=>s.classList.toggle('on',s.id===id));
 let tt;function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(tt);tt=setTimeout(()=>t.style.display='none',2800)}
 function copy(t){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast(T('copied')),()=>prompt('Copy:',t))}
-function cleanup(){mode='off';gen++;try{conn&&conn.close()}catch(e){}try{peer&&peer.destroy()}catch(e){}conn=peer=null;hostConns={};pids={};H=null;V=null;started=false;names=[...BOTN];humans=[true,false,false,false];prevKeys=new Set();prevHand=0;lastLob=null;$('#tricks').innerHTML='';$('#hand').innerHTML='';$('#rMenu').style.display='flex';$('#rLob').style.display='none'}
+function cleanup(){netBye();mode='off';gen++;netClose();hostConns={};pids={};H=null;V=null;started=false;names=[...BOTN];humans=[true,false,false,false];prevKeys=new Set();prevHand=0;lastLob=null;$('#tricks').innerHTML='';$('#hand').innerHTML='';$('#rMenu').style.display='flex';$('#rLob').style.display='none'}
 function home(){cleanup();clearSaved();show('home');refreshResume()}
 $$('.bk').forEach(b=>b.onclick=()=>{if($('#tbl').classList.contains('on')&&mode!=='off'&&V&&V.phase!=='gameEnd'&&!confirm(T('leave')))return;home()});
 ['#nm','#nm2'].forEach(s=>{$(s).value=myName;$(s).oninput=e=>{myName=e.target.value.trim();$('#nm').value=$('#nm2').value=e.target.value;try{localStorage.setItem('omiName',myName)}catch(x){}}});
@@ -378,79 +382,104 @@ $('#bHow').onclick=()=>show('how');$('#xHow').onclick=()=>show('home');
 $('#bBot').onclick=()=>{cleanup();clearSaved();mode='off';names=[nameOf(),...BOTN.slice(1)];myName=names[0];newGame()};
 $('#bFr').onclick=()=>show('room');
 
-/* ===== online (host = game server, PeerJS = transport) ===== */
-const PC={debug:0,config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'},{urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}]}};
-const noNet=()=>typeof Peer==='undefined'&&(toast(T('nonet')),true);
+/* ===== online: host = game server, public MQTT broker = relay (works on any network) ===== */
+const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt','wss://test.mosquitto.org:8081'];
+const noNet=()=>typeof mqtt==='undefined'&&(toast(T('nonet')),true);
+const tUp=()=>'omi/v1/'+roomCode+'/up',tDn=p=>'omi/v1/'+roomCode+'/dn/'+p;
+const pub=(t,o)=>{try{if(mq&&mq.connected)mq.publish(t,JSON.stringify(o),{qos:0})}catch(e){}};
+const tx=(s,o)=>{if(hostConns[s]&&pids[s])pub(tDn(pids[s]),o)};
+function netClose(){clearInterval(hbT);hbT=null;const c=mq;mq=null;try{c&&c.end()}catch(e){}}
+function netBye(){try{if(mode==='host'){for(const s in hostConns)tx(+s,{t:'bye'})}else if(mode==='guest')pub(tUp(),{t:'bye',pid:PID})}catch(e){}}
+function netStart(idx,sub,onMsg,onUp,onFail){
+ netClose();const g=++gen;let ok=false,c;
+ try{c=mqtt.connect(BROKERS[idx],{clientId:'omi_'+Math.random().toString(36).slice(2,10),clean:true,reconnectPeriod:2000,connectTimeout:8000,keepalive:20})}catch(e){setTimeout(()=>{if(g===gen)onFail()},0);return g}
+ mq=c;
+ const to=setTimeout(()=>{if(!ok&&g===gen)onFail()},11000);
+ c.on('connect',()=>{if(g!==gen)return;c.subscribe(sub,{qos:0},err=>{if(g!==gen)return;if(err){if(!ok)onFail();return}const first=!ok;ok=true;clearTimeout(to);onUp(first)})});
+ c.on('message',(t,p)=>{if(g!==gen)return;let m;try{m=JSON.parse(p.toString())}catch(e){return}onMsg(m)});
+ c.on('error',()=>{});
+ return g}
+function keepAwake(){try{navigator.wakeLock&&navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}}
+
 function lobby(d){lastLob=d;$('#rMenu').style.display='none';$('#rLob').style.display='flex';$('#rCode').textContent=roomCode;show('room');
  $('#seats').innerHTML='';for(let s=0;s<4;s++){const r=document.createElement('div');r.className='seat';const h=d.humans[s];
   r.innerHTML='<div class="av"></div><b></b><small></small>';r.children[0].textContent=h?avOf(d.names[s]):'🤖';r.children[1].textContent=h?d.names[s]+(s===d.seat?' '+T('youtag'):''):T('open');r.children[2].textContent=(s%2?T('teamB'):T('teamA'))+' · '+T('seat')+' '+(s+1);$('#seats').appendChild(r)}
  $('#start').style.display=mode==='host'?'':'none';$('#wt').style.display=mode==='host'?'none':'block'}
-function lobPush(){const d={names,humans};for(const s in hostConns)try{hostConns[s].send({t:'lob',...d,seat:+s})}catch(e){}lobby({...d,seat:0});saveHost()}
-$('#mk').onclick=()=>{if(noNet())return;cleanup();clearSaved();myName=nameOf();mode='host';names=[myName,...BOTN.slice(1)];mkRoom(String(100000+Math.floor(Math.random()*900000)),false,0)};
+function lobPush(){const d={names,humans};for(const s in hostConns)tx(+s,{t:'lob',...d,seat:+s});lobby({...d,seat:0});saveHost()}
+
+/* host */
+const newCode=i=>String(10000+Math.floor(Math.random()*90000))+i;
+$('#mk').onclick=()=>{if(noNet())return;cleanup();clearSaved();myName=nameOf();mode='host';names=[myName,...BOTN.slice(1)];toast(T('connecting'));hostTry(0)};
+function hostTry(i){if(mode!=='host')return;if(i>=BROKERS.length){toast(T('connprob'));home();return}roomCode=newCode(i);hostBoot(i,()=>hostTry(i+1))}
+function hostBoot(i,onFail){
+ netStart(i,tUp(),hostData,first=>{if(!first)return;beat();
+  if(H){
+   if(H.phase==='trickEnd'){H.trick=[];H.phase='play';H.turn=H.tw;if(H.hands.every(x=>!x.length)){handEnd();return}}
+   if(H.phase==='handEnd'){afterHand();return}
+   push();aiStep()}
+  else lobPush()},()=>{netClose();onFail()})}
 function resumeHost(){if(noNet())return;const s=savedHost();if(!s)return refreshResume();cleanup();mode='host';
  names=s.names;humans=[true,false,false,false];pids=s.pids||{};started=!!s.started;H=s.H||null;myName=names[0]||nameOf();
- if(H){H.names=names;H.humans=humans}toast(T('connecting'));mkRoom(s.code,true,0)}
-function mkRoom(code,resuming,tries){const g=++gen;try{peer&&peer.destroy()}catch(e){}hostConns={};roomCode=code;peer=new Peer('omipm'+code,PC);
- peer.on('open',()=>{if(g!==gen)return;
-  if(H){ if(H.phase==='trickEnd'){H.trick=[];H.phase='play';H.turn=H.tw;if(H.hands.every(x=>!x.length)){handEnd();return}}
-         if(H.phase==='handEnd'){afterHand();return}
-         push();aiStep()}
-  else lobPush()});
- peer.on('disconnected',()=>{if(g===gen)try{peer.reconnect()}catch(e){}});
- peer.on('error',e=>{if(g!==gen)return;
-  if(e.type==='unavailable-id'){
-   if(resuming&&tries<8){setTimeout(()=>{if(g===gen&&mode==='host')mkRoom(code,true,tries+1)},2500)}
-   else if(!resuming&&!H){mkRoom(String(100000+Math.floor(Math.random()*900000)),false,0)}
-   else{toast(T('connprob'));home()}}
-  else if(e.type==='network'||e.type==='server-error'||e.type==='socket-error'||e.type==='socket-closed'){try{peer.reconnect()}catch(x){}}
-  else{toast(T('connprob')+' ('+e.type+')');if(!H)home()}});
- peer.on('connection',cn=>{cn.on('data',d=>hostData(cn,d));cn.on('close',()=>dropped(cn))})}
-function hostData(cn,d){
- if(d.t==='hi'){const pid=String(d.pid||'').slice(0,40);let s=pid?[1,2,3].find(x=>pids[x]===pid):0;
-  if(!s&&!started)s=[1,2,3].find(x=>!humans[x]);
-  if(!s){cn.send({t:'full'});setTimeout(()=>cn.close(),400);return}
-  const old=hostConns[s];hostConns[s]=cn;cn.seat=s;humans[s]=true;names[s]=String(d.name||'Player').slice(0,12);pids[s]=pid||('x'+s);
-  if(old&&old!==cn)try{old.close()}catch(e){}
-  if(H){push();aiStep()}else lobPush();
-  if(mode==='host')toast(T('joined',names[s]))}
- else if(d.t==='act'&&cn.seat){d.a==='trump'?actTrump(cn.seat,d.v):actPlay(cn.seat,d.v)}
- else if(d.t==='rx'&&cn.seat&&typeof d.e==='string')bcastRx(cn.seat,d.e.slice(0,3))}
-function dropped(cn){const s=cn.seat;if(!s||hostConns[s]!==cn)return;delete hostConns[s];humans[s]=false;toast(T('left',names[s]));
+ if(H){H.names=names;H.humans=humans}
+ roomCode=s.code;toast(T('connecting'));hostBoot(+s.code.slice(-1),()=>{toast(T('connprob'));home()})}
+function beat(){clearInterval(hbT);let ls=Date.now();hbT=setInterval(()=>{const n=Date.now();if(n-ls>9000)for(const s in hostConns)hostConns[s].last=n;ls=n;for(const s in hostConns)if(n-hostConns[s].last>16000)dropped(+s)},4000)}
+function sendState(s){H?tx(s,{t:'st',v:view(s)}):tx(s,{t:'lob',names,humans,seat:s})}
+function hostData(m){if(mode!=='host'||!m||!m.pid)return;const pid=String(m.pid).slice(0,40),now=Date.now();
+ const sc=[1,2,3].find(x=>pids[x]===pid&&hostConns[x]);
+ if(m.t==='hi'){let s=[1,2,3].find(x=>pids[x]===pid);if(!s&&!started)s=[1,2,3].find(x=>!humans[x]);
+  if(!s){pub(tDn(pid),{t:'full'});return}
+  const fresh=!hostConns[s];hostConns[s]={last:now};humans[s]=true;pids[s]=pid;
+  if(fresh)names[s]=String(m.name||'Player').slice(0,12);
+  if(!fresh){sendState(s);return}
+  toast(T('joined',names[s]));if(H){push();aiStep()}else lobPush()}
+ else if(!sc)pub(tDn(pid),{t:'unk'});
+ else if(m.t==='ping'){hostConns[sc].last=now;pub(tDn(pid),{t:'pong',ver:H?H.ver|0:-1})}
+ else if(m.t==='sync')sendState(sc);
+ else if(m.t==='act'){hostConns[sc].last=now;m.a==='trump'?actTrump(sc,m.v):actPlay(sc,m.v)}
+ else if(m.t==='rx'){if(typeof m.e==='string')bcastRx(sc,m.e.slice(0,3))}
+ else if(m.t==='bye')dropped(sc)}
+function dropped(s){if(!hostConns[s])return;delete hostConns[s];humans[s]=false;toast(T('left',names[s]));
  if(!started){delete pids[s];names[s]=BOTN[s]}
  if(H){push();aiStep()}else lobPush()}
-$('#start').onclick=()=>{started=true;newGame()};
+$('#start').onclick=()=>{started=true;keepAwake();newGame()};
 $('#cpC').onclick=()=>copy(roomCode);
-$('#cpL').onclick=()=>{const u=location.origin+location.pathname+'?room='+roomCode;if(navigator.share)navigator.share({title:'OMI Royal',text:T('sharetxt'),url:u}).catch(()=>{});else copy(u)};
+$('#cpL').onclick=()=>{const u=location.href.split('#')[0].split('?')[0]+'?room='+roomCode;if(navigator.share)navigator.share({title:'OMI Royal',text:T('sharetxt')+' ('+roomCode+')',url:u}).catch(()=>{});else copy(u)};
 
 /* guest */
-let gTry=0,okFlag=false;
+let gTry=0,okFlag=false,gotAny=false,lastRx=0,gVer=-2;
 function gOk(code){okFlag=true;gTry=0;try{localStorage.setItem('omiGuest',JSON.stringify({code,t:Date.now()}))}catch(e){}}
 function gLost(){if(mode!=='guest')return;if(++gTry>12){toast(T('hostleft'));home();return}toast(T('reconn'));setTimeout(()=>{if(mode==='guest')gStart(roomCode)},2500)}
-function gStart(code){const g=++gen;try{peer&&peer.destroy()}catch(e){}conn=null;peer=new Peer(PC);
- peer.on('open',()=>{if(g!==gen)return;conn=peer.connect('omipm'+code,{reliable:true});
-  conn.on('open',()=>{if(g===gen)conn.send({t:'hi',name:myName,pid:PID})});
-  conn.on('data',d=>{if(g!==gen)return;
-   if(d.t==='lob'){gOk(code);lobby(d)}
-   else if(d.t==='st'){gOk(code);render(d.v)}
-   else if(d.t==='rx')fly(d.seat,d.e);
-   else if(d.t==='full'){toast(T('full'));cleanup();clearSaved();show('room')}});
-  conn.on('close',()=>{if(g===gen)gLost()})});
- peer.on('disconnected',()=>{if(g===gen)try{peer.reconnect()}catch(e){}});
- peer.on('error',e=>{if(g!==gen)return;
-  if(!okFlag){toast(e.type==='peer-unavailable'?T('notfound'):T('connprob'));cleanup();clearSaved();show('room')}
-  else if(e.type==='peer-unavailable'||e.type==='network'||e.type==='server-error'||e.type==='socket-error'||e.type==='socket-closed')gLost()
-  else gLost()})}
+function hello(){clearInterval(hbT);const g=gen;let n=0;gotAny=false;lastRx=Date.now();
+ const hi=()=>pub(tUp(),{t:'hi',pid:PID,name:myName});
+ hi();
+ hbT=setInterval(()=>{if(g!==gen||mode!=='guest')return;
+  if(!gotAny){if(++n>3){clearInterval(hbT);if(!okFlag){toast(T('notfound'));cleanup();clearSaved();show('room')}else gLost();return}hi();return}
+  pub(tUp(),{t:'ping',pid:PID});
+  const d=Date.now()-lastRx;
+  if(d>60000){clearInterval(hbT);toast(T('hostleft'));home()}else if(d>12000)toast(T('reconn'))},3000)}
+function gStart(code){roomCode=code;const i=+code.slice(-1);gVer=-2;
+ if(!(i>=0&&i<BROKERS.length)){toast(T('notfound'));cleanup();clearSaved();show('room');return}
+ netStart(i,tDn(PID),gData,()=>{if(mode==='guest')hello()},()=>{netClose();if(!okFlag){toast(T('connprob'));cleanup();show('room')}else gLost()})}
+function gData(m){if(mode!=='guest'||!m)return;gotAny=true;lastRx=Date.now();
+ if(m.t==='lob'){gOk(roomCode);lobby(m)}
+ else if(m.t==='st'){gOk(roomCode);gVer=m.v.ver;render(m.v)}
+ else if(m.t==='rx')fly(m.seat,m.e);
+ else if(m.t==='pong'){if(m.ver>=0&&m.ver!==gVer)pub(tUp(),{t:'sync',pid:PID})}
+ else if(m.t==='unk')pub(tUp(),{t:'hi',pid:PID,name:myName});
+ else if(m.t==='full'){toast(T('full'));cleanup();clearSaved();show('room')}
+ else if(m.t==='bye'){toast(T('hostleft'));home()}}
 $('#jn').onclick=()=>{if(noNet())return;const c=$('#cd').value.trim();if(!/^\d{6}$/.test(c))return toast(T('enter'));
- cleanup();myName=nameOf();mode='guest';roomCode=c;gTry=0;okFlag=false;toast(T('connecting'));gStart(c)};
+ cleanup();myName=nameOf();mode='guest';roomCode=c;gTry=0;okFlag=false;toast(T('connecting'));keepAwake();gStart(c)};
 
-/* come back from WhatsApp / other app: reconnect everything */
+/* coming back from WhatsApp / another app: reconnect */
 document.addEventListener('visibilitychange',()=>{if(document.hidden)return;
- try{if(peer&&!peer.destroyed&&peer.disconnected)peer.reconnect()}catch(e){}
- if(mode==='guest'&&okFlag&&(!conn||!conn.open))gLost()});
+ try{if(mq&&!mq.connected&&!mq.reconnecting)mq.reconnect()}catch(e){}
+ if(mode!=='off')keepAwake();
+ if(mode==='guest'&&okFlag)pub(tUp(),{t:'ping',pid:PID})});
 
 const q=new URLSearchParams(location.search).get('room');
 applyLang();
-if(q&&/^\d{6}$/.test(q)){show('room');$('#cd').value=q}
+if(q&&/^\d{6}$/.test(q)){show('room');$('#cd').value=q;setTimeout(()=>{try{$('#nm2').focus()}catch(e){}},300)}
 })();
 </script>
 </body>
