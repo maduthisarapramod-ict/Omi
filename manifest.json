@@ -1,0 +1,13 @@
+{
+  "background_color": "#0b3d24",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "OMI Royal",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "OMI Royal",
+  "start_url": "/",
+  "theme_color": "#0b3d24",
+  "id": "Omi",
+  "description": "Play traditional Sri Lankan Omi card game offline with bots or online!"
+}
