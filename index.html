@@ -675,4 +675,72 @@ function hostBoot(i,onFail){
 function resumeHost(){if(noNet())return;const s=savedHost();if(!s)return refreshResume();cleanup();mode='host';
  names=s.names;humans=[true,false,false,false];pids=s.pids||{};started=!!s.started;H=s.H||null;myName=names[0]||nameOf();
  if(H){H.names=names;H.humans=humans}
- roomCode=s.code;toast(T('connecting'));hostBoot(+s.code.
+ roomCode=s.code;toast(T('connecting'));hostBoot(+s.code.slice(-1),()=>{toast(T('connprob'));home()})}
+function beat(){clearInterval(hbT);let ls=Date.now();hbT=setInterval(()=>{const n=Date.now();if(n-ls>9000)for(const s in hostConns)hostConns[s].last=n;ls=n;for(const s in hostConns)if(n-hostConns[s].last>16000)dropped(+s)},4000)}
+function sendState(s){H?tx(s,{t:'st',v:view(s)}):tx(s,{t:'lob',names,humans,seat:s})}
+function hostData(m){if(mode!=='host'||!m||!m.pid)return;const pid=String(m.pid).slice(0,40),now=Date.now();
+ const sc=[1,2,3].find(x=>pids[x]===pid&&hostConns[x]);
+ if(m.t==='hi'){let s=[1,2,3].find(x=>pids[x]===pid);if(!s&&!started)s=[1,2,3].find(x=>!humans[x]);
+  if(!s){pub(tDn(pid),{t:'full'});return}
+  const fresh=!hostConns[s];hostConns[s]={last:now};humans[s]=true;pids[s]=pid;
+  if(fresh)names[s]=String(m.name||'Player').slice(0,12);
+  if(!fresh){sendState(s);return}
+  toast(T('joined',names[s]));if(H){push();aiStep()}else lobPush()}
+ else if(!sc)pub(tDn(pid),{t:'unk'});
+ else if(m.t==='ping'){hostConns[sc].last=now;pub(tDn(pid),{t:'pong',ver:H?H.ver|0:-1})}
+ else if(m.t==='sync')sendState(sc);
+ else if(m.t==='act'){hostConns[sc].last=now;m.a==='trump'?actTrump(sc,m.v):actPlay(sc,m.v)}
+ else if(m.t==='rx'){if(typeof m.e==='string')bcastRx(sc,m.e.slice(0,3))}
+ else if(m.t==='chat'&&typeof m.text==='string'){
+  const msg={t:'chat',pid,name:String(m.name||names[sc]||'Player').slice(0,16),text:String(m.text).slice(0,120),team:sc%2,quick:!!m.quick};
+  receiveChat(msg);for(const x in hostConns)tx(+x,msg);
+ }
+ else if(m.t==='team'&&!started){switchLobbyTeam(sc)}
+ else if(m.t==='bye')dropped(sc)}
+function dropped(s){if(!hostConns[s])return;delete hostConns[s];humans[s]=false;toast(T('left',names[s]));
+ if(!started){delete pids[s];names[s]=BOTN[s]}
+ if(H){push();aiStep()}else lobPush()}
+$('#start').onclick=()=>{started=true;keepAwake();newGame()};
+$('#cpC').onclick=()=>copy(roomCode);
+$('#cpL').onclick=()=>{const u=location.href.split('#')[0].split('?')[0]+'?room='+roomCode;if(navigator.share)navigator.share({title:'OMI Royal',text:T('sharetxt')+' ('+roomCode+')',url:u}).catch(()=>{});else copy(u)};
+
+/* guest */
+let gTry=0,okFlag=false,gotAny=false,lastRx=0,gVer=-2;
+function gOk(code){okFlag=true;gTry=0;try{localStorage.setItem('omiGuest',JSON.stringify({code,t:Date.now()}))}catch(e){}}
+function gLost(){if(mode!=='guest')return;if(++gTry>12){toast(T('hostleft'));home();return}toast(T('reconn'));setTimeout(()=>{if(mode==='guest')gStart(roomCode)},2500)}
+function hello(){clearInterval(hbT);const g=gen;let n=0;gotAny=false;lastRx=Date.now();
+ const hi=()=>pub(tUp(),{t:'hi',pid:PID,name:myName});
+ hi();
+ hbT=setInterval(()=>{if(g!==gen||mode!=='guest')return;
+  if(!gotAny){if(++n>3){clearInterval(hbT);if(!okFlag){toast(T('notfound'));cleanup();clearSaved();show('room')}else gLost();return}hi();return}
+  pub(tUp(),{t:'ping',pid:PID});
+  const d=Date.now()-lastRx;
+  if(d>60000){clearInterval(hbT);toast(T('hostleft'));home()}else if(d>12000)toast(T('reconn'))},3000)}
+function gStart(code){roomCode=code;const i=+code.slice(-1);gVer=-2;
+ if(!(i>=0&&i<BROKERS.length)){toast(T('notfound'));cleanup();clearSaved();show('room');return}
+ netStart(i,tDn(PID),gData,()=>{if(mode==='guest')hello()},()=>{netClose();if(!okFlag){toast(T('connprob'));cleanup();show('room')}else gLost()})}
+function gData(m){if(mode!=='guest'||!m)return;gotAny=true;lastRx=Date.now();
+ if(m.t==='lob'){gOk(roomCode);lobby(m)}
+ else if(m.t==='st'){gOk(roomCode);gVer=m.v.ver;render(m.v)}
+ else if(m.t==='rx')fly(m.seat,m.e);
+  else if(m.t==='chat')receiveChat(m);
+ else if(m.t==='pong'){if(m.ver>=0&&m.ver!==gVer)pub(tUp(),{t:'sync',pid:PID})}
+ else if(m.t==='unk')pub(tUp(),{t:'hi',pid:PID,name:myName});
+ else if(m.t==='full'){toast(T('full'));cleanup();clearSaved();show('room')}
+ else if(m.t==='bye'){toast(T('hostleft'));home()}}
+$('#jn').onclick=()=>{if(noNet())return;const c=$('#cd').value.trim();if(!/^\d{6}$/.test(c))return toast(T('enter'));
+ cleanup();myName=nameOf();mode='guest';roomCode=c;gTry=0;okFlag=false;toast(T('connecting'));keepAwake();gStart(c)};
+
+/* coming back from WhatsApp / another app: reconnect */
+document.addEventListener('visibilitychange',()=>{if(document.hidden)return;
+ try{if(mq&&!mq.connected&&!mq.reconnecting)mq.reconnect()}catch(e){}
+ if(mode!=='off')keepAwake();
+ if(mode==='guest'&&okFlag)pub(tUp(),{t:'ping',pid:PID})});
+
+const q=new URLSearchParams(location.search).get('room');
+applyLang();
+if(q&&/^\d{6}$/.test(q)){show('room');$('#cd').value=q;setTimeout(()=>{try{$('#nm2').focus()}catch(e){}},300)}
+})();
+</script>
+</body>
+</html>
